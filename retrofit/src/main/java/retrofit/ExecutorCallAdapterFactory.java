@@ -16,6 +16,7 @@
 package retrofit;
 
 import java.io.IOException;
+import java.lang.annotation.Annotation;
 import java.lang.reflect.Type;
 import java.util.concurrent.Executor;
 
@@ -26,21 +27,18 @@ final class ExecutorCallAdapterFactory implements CallAdapter.Factory {
     this.callbackExecutor = callbackExecutor;
   }
 
-  @Override public String toString() {
-    return "ExecutorCallAdapterFactory[" + callbackExecutor + ']';
-  }
-
-  @Override public CallAdapter<?> get(Type returnType) {
+  @Override
+  public CallAdapter<Call<?>> get(Type returnType, Annotation[] annotations, Retrofit retrofit) {
     if (Utils.getRawType(returnType) != Call.class) {
       return null;
     }
     final Type responseType = Utils.getCallResponseType(returnType);
-    return new CallAdapter<Object>() {
+    return new CallAdapter<Call<?>>() {
       @Override public Type responseType() {
         return responseType;
       }
 
-      @Override public Call<Object> adapt(Call<Object> call) {
+      @Override public <R> Call<R> adapt(Call<R> call) {
         return new ExecutorCallbackCall<>(callbackExecutor, call);
       }
     };
@@ -82,18 +80,18 @@ final class ExecutorCallAdapterFactory implements CallAdapter.Factory {
       this.delegate = delegate;
     }
 
-    @Override public void success(final Response<T> response) {
+    @Override public void onResponse(final Response<T> response, final Retrofit retrofit) {
       callbackExecutor.execute(new Runnable() {
         @Override public void run() {
-          delegate.success(response);
+          delegate.onResponse(response, retrofit);
         }
       });
     }
 
-    @Override public void failure(final Throwable t) {
+    @Override public void onFailure(final Throwable t) {
       callbackExecutor.execute(new Runnable() {
         @Override public void run() {
-          delegate.failure(t);
+          delegate.onFailure(t);
         }
       });
     }

@@ -18,17 +18,31 @@ package retrofit;
 import com.squareup.okhttp.RequestBody;
 import com.squareup.okhttp.ResponseBody;
 import java.io.IOException;
+import java.lang.annotation.Annotation;
 import java.lang.reflect.Type;
 
-/** Convert objects to and from their representation as HTTP bodies. */
-public interface Converter<T> {
-  /** Convert an HTTP response body to a concrete object of the specified type. */
-  T fromBody(ResponseBody body) throws IOException;
+/**
+ * Convert objects to and from their representation as HTTP bodies. Register a converter with
+ * Retrofit using {@link Retrofit.Builder#addConverterFactory(Factory)}.
+ */
+public interface Converter<F, T> {
+  T convert(F value) throws IOException;
 
-  /** Convert an object to an appropriate representation for HTTP transport. */
-  RequestBody toBody(T value);
+  abstract class Factory {
+    /**
+     * Create a {@link Converter} for converting an HTTP response body to {@code type} or null if it
+     * cannot be handled by this factory.
+     */
+    public Converter<ResponseBody, ?> fromResponseBody(Type type, Annotation[] annotations) {
+      return null;
+    }
 
-  interface Factory {
-    Converter<?> get(Type type);
+    /**
+     * Create a {@link Converter} for converting {@code type} to an HTTP request body or null if it
+     * cannot be handled by this factory.
+     */
+    public Converter<?, RequestBody> toRequestBody(Type type, Annotation[] annotations) {
+      return null;
+    }
   }
 }

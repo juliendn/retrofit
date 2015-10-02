@@ -17,6 +17,7 @@ package retrofit;
 
 import com.google.common.reflect.TypeToken;
 import java.io.IOException;
+import java.lang.annotation.Annotation;
 import java.lang.reflect.Type;
 import java.util.List;
 import java.util.concurrent.Executor;
@@ -32,6 +33,11 @@ import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 @SuppressWarnings("unchecked")
 public final class ExecutorCallAdapterFactoryTest {
+  private static final Annotation[] NO_ANNOTATIONS = new Annotation[0];
+
+  private final Retrofit retrofit = new Retrofit.Builder()
+      .baseUrl("http://localhost:1")
+      .build();
   private final Callback<String> callback = mock(Callback.class);
   private final Executor callbackExecutor = spy(new Executor() {
     @Override public void execute(Runnable runnable) {
@@ -42,7 +48,7 @@ public final class ExecutorCallAdapterFactoryTest {
 
   @Test public void rawTypeThrows() {
     try {
-      factory.get(Call.class);
+      factory.get(Call.class, NO_ANNOTATIONS, retrofit);
       fail();
     } catch (IllegalArgumentException e) {
       assertThat(e).hasMessage("Call return type must be parameterized as Call<Foo> or Call<? extends Foo>");
@@ -52,7 +58,7 @@ public final class ExecutorCallAdapterFactoryTest {
   @Test public void responseThrows() {
     Type returnType = new TypeToken<Call<Response<String>>>() {}.getType();
     try {
-      factory.get(returnType);
+      factory.get(returnType, NO_ANNOTATIONS, retrofit);
       fail();
     } catch (IllegalArgumentException e) {
       assertThat(e).hasMessage("Call<T> cannot use Response as its generic parameter. "
@@ -62,18 +68,21 @@ public final class ExecutorCallAdapterFactoryTest {
 
   @Test public void responseType() {
     Type classType = new TypeToken<Call<String>>() {}.getType();
-    assertThat(factory.get(classType).responseType()).isEqualTo(String.class);
+    assertThat(factory.get(classType, NO_ANNOTATIONS, retrofit).responseType())
+        .isEqualTo(String.class);
     Type wilcardType = new TypeToken<Call<? extends String>>() {}.getType();
-    assertThat(factory.get(wilcardType).responseType()).isEqualTo(String.class);
+    assertThat(factory.get(wilcardType, NO_ANNOTATIONS, retrofit).responseType())
+        .isEqualTo(String.class);
     Type genericType = new TypeToken<Call<List<String>>>() {}.getType();
-    assertThat(factory.get(genericType).responseType()) //
+    assertThat(factory.get(genericType, NO_ANNOTATIONS, retrofit).responseType())
         .isEqualTo(new TypeToken<List<String>>() {}.getType());
   }
 
   @Test public void adaptedCallExecute() throws IOException {
     Type returnType = new TypeToken<Call<String>>() {}.getType();
-    CallAdapter<String> adapter = (CallAdapter<String>) factory.get(returnType);
-    final Response<String> response = Response.fakeSuccess("Hi");
+    CallAdapter<Call<?>> adapter =
+        (CallAdapter<Call<?>>) factory.get(returnType, NO_ANNOTATIONS, retrofit);
+    final Response<String> response = Response.success("Hi");
     Call<String> call = (Call<String>) adapter.adapt(new EmptyCall() {
       @Override public Response<String> execute() throws IOException {
         return response;
@@ -84,37 +93,40 @@ public final class ExecutorCallAdapterFactoryTest {
 
   @Test public void adaptedCallEnqueueUsesExecutorForSuccessCallback() {
     Type returnType = new TypeToken<Call<String>>() {}.getType();
-    CallAdapter<String> adapter = (CallAdapter<String>) factory.get(returnType);
-    final Response<String> response = Response.fakeSuccess("Hi");
+    CallAdapter<Call<?>> adapter =
+        (CallAdapter<Call<?>>) factory.get(returnType, NO_ANNOTATIONS, retrofit);
+    final Response<String> response = Response.success("Hi");
     Call<String> call = (Call<String>) adapter.adapt(new EmptyCall() {
       @Override public void enqueue(Callback<String> callback) {
-        callback.success(response);
+        callback.onResponse(response, retrofit);
       }
     });
     call.enqueue(callback);
     verify(callbackExecutor).execute(any(Runnable.class));
-    verify(callback).success(response);
+    verify(callback).onResponse(response, retrofit);
   }
 
   @Test public void adaptedCallEnqueueUsesExecutorForFailureCallback() {
     Type returnType = new TypeToken<Call<String>>() {}.getType();
-    CallAdapter<String> adapter = (CallAdapter<String>) factory.get(returnType);
+    CallAdapter<Call<?>> adapter =
+        (CallAdapter<Call<?>>) factory.get(returnType, NO_ANNOTATIONS, retrofit);
     final Throwable throwable = new IOException();
     Call<String> call = (Call<String>) adapter.adapt(new EmptyCall() {
       @Override public void enqueue(Callback<String> callback) {
-        callback.failure(throwable);
+        callback.onFailure(throwable);
       }
     });
     call.enqueue(callback);
     verify(callbackExecutor).execute(any(Runnable.class));
     verifyNoMoreInteractions(callbackExecutor);
-    verify(callback).failure(throwable);
+    verify(callback).onFailure(throwable);
     verifyNoMoreInteractions(callback);
   }
 
   @Test public void adaptedCallCloneDeepCopy() {
     Type returnType = new TypeToken<Call<String>>() {}.getType();
-    CallAdapter<String> adapter = (CallAdapter<String>) factory.get(returnType);
+    CallAdapter<Call<?>> adapter =
+        (CallAdapter<Call<?>>) factory.get(returnType, NO_ANNOTATIONS, retrofit);
     Call<String> delegate = mock(Call.class);
     Call<String> call = (Call<String>) adapter.adapt(delegate);
     Call<String> cloned = call.clone();
@@ -125,7 +137,8 @@ public final class ExecutorCallAdapterFactoryTest {
 
   @Test public void adaptedCallCancel() {
     Type returnType = new TypeToken<Call<String>>() {}.getType();
-    CallAdapter<String> adapter = (CallAdapter<String>) factory.get(returnType);
+    CallAdapter<Call<?>> adapter =
+        (CallAdapter<Call<?>>) factory.get(returnType, NO_ANNOTATIONS, retrofit);
     Call<String> delegate = mock(Call.class);
     Call<String> call = (Call<String>) adapter.adapt(delegate);
     call.cancel();

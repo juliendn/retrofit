@@ -48,18 +48,17 @@ import retrofit.http.Url;
 
 import static retrofit.Utils.methodError;
 
-/** Request metadata about a service interface declaration. */
 final class RequestFactoryParser {
   // Upper and lower characters, digits, underscores, and hyphens, starting with a character.
   private static final String PARAM = "[a-zA-Z][a-zA-Z0-9_-]*";
   private static final Pattern PARAM_NAME_REGEX = Pattern.compile(PARAM);
   private static final Pattern PARAM_URL_REGEX = Pattern.compile("\\{(" + PARAM + ")\\}");
 
-  static RequestFactory parse(Method method, BaseUrl baseUrl, Converter.Factory converterFactory) {
+  static RequestFactory parse(Method method, Type responseType, Retrofit retrofit) {
     RequestFactoryParser parser = new RequestFactoryParser(method);
-    parser.parseMethodAnnotations();
-    parser.parseParameters(converterFactory);
-    return parser.toRequestFactory(baseUrl);
+    parser.parseMethodAnnotations(responseType);
+    parser.parseParameters(retrofit);
+    return parser.toRequestFactory(retrofit.baseUrl());
   }
 
   private final Method method;
@@ -70,7 +69,7 @@ final class RequestFactoryParser {
   private boolean isMultipart;
   private String relativeUrl;
   private com.squareup.okhttp.Headers headers;
-  private MediaType mediaType;
+  private MediaType contentType;
   private RequestBuilderAction[] requestBuilderActions;
 
   private Set<String> relativeUrlParamNames;
@@ -80,15 +79,20 @@ final class RequestFactoryParser {
   }
 
   private RequestFactory toRequestFactory(BaseUrl baseUrl) {
-    return new RequestFactory(httpMethod, baseUrl, relativeUrl, headers, mediaType, hasBody,
+    return new RequestFactory(httpMethod, baseUrl, relativeUrl, headers, contentType, hasBody,
         isFormEncoded, isMultipart, requestBuilderActions);
+  }
+
+  private RuntimeException parameterError(Throwable cause, int index, String message,
+      Object... args) {
+    return methodError(cause, method, message + " (parameter #" + (index + 1) + ")", args);
   }
 
   private RuntimeException parameterError(int index, String message, Object... args) {
     return methodError(method, message + " (parameter #" + (index + 1) + ")", args);
   }
 
-  private void parseMethodAnnotations() {
+  private void parseMethodAnnotations(Type responseType) {
     for (Annotation annotation : method.getAnnotations()) {
       if (annotation instanceof DELETE) {
         parseHttpMethodAndPath("DELETE", ((DELETE) annotation).value(), false);
@@ -96,6 +100,9 @@ final class RequestFactoryParser {
         parseHttpMethodAndPath("GET", ((GET) annotation).value(), false);
       } else if (annotation instanceof HEAD) {
         parseHttpMethodAndPath("HEAD", ((HEAD) annotation).value(), false);
+        if (!Void.class.equals(responseType)) {
+          throw methodError(method, "HEAD method must use Void as response type.");
+        }
       } else if (annotation instanceof PATCH) {
         parseHttpMethodAndPath("PATCH", ((PATCH) annotation).value(), true);
       } else if (annotation instanceof POST) {
@@ -179,7 +186,7 @@ final class RequestFactoryParser {
       String headerName = header.substring(0, colon);
       String headerValue = header.substring(colon + 1).trim();
       if ("Content-Type".equalsIgnoreCase(headerName)) {
-        mediaType = MediaType.parse(headerValue);
+        contentType = MediaType.parse(headerValue);
       } else {
         builder.add(headerName, headerValue);
       }
@@ -187,7 +194,7 @@ final class RequestFactoryParser {
     return builder.build();
   }
 
-  private void parseParameters(Converter.Factory converterFactory) {
+  private void parseParameters(Retrofit retrofit) {
     Type[] methodParameterTypes = method.getGenericParameterTypes();
     Annotation[][] methodParameterAnnotationArrays = method.getParameterAnnotations();
 
@@ -205,10 +212,7 @@ final class RequestFactoryParser {
       Annotation[] methodParameterAnnotations = methodParameterAnnotationArrays[i];
       if (methodParameterAnnotations != null) {
         for (Annotation methodParameterAnnotation : methodParameterAnnotations) {
-          if (requestBuilderActions[i] != null) {
-            throw parameterError(i, "Multiple Retrofit annotations found, only one allowed.");
-          }
-
+          RequestBuilderAction action = null;
           if (methodParameterAnnotation instanceof Url) {
             if (gotUrl) {
               throw parameterError(i, "Multiple @Url method annotations found.");
@@ -226,7 +230,7 @@ final class RequestFactoryParser {
               throw parameterError(i, "@Url cannot be used with @%s URL", httpMethod);
             }
             gotUrl = true;
-            requestBuilderActions[i] = new RequestBuilderAction.Url();
+            action = new RequestBuilderAction.Url();
 
           } else if (methodParameterAnnotation instanceof Path) {
             if (gotQuery) {
@@ -244,12 +248,11 @@ final class RequestFactoryParser {
             Path path = (Path) methodParameterAnnotation;
             String name = path.value();
             validatePathName(i, name);
-            requestBuilderActions[i] = new RequestBuilderAction.Path(name, path.encoded());
+            action = new RequestBuilderAction.Path(name, path.encoded());
 
           } else if (methodParameterAnnotation instanceof Query) {
             Query query = (Query) methodParameterAnnotation;
-            requestBuilderActions[i] =
-                new RequestBuilderAction.Query(query.value(), query.encoded());
+            action = new RequestBuilderAction.Query(query.value(), query.encoded());
             gotQuery = true;
 
           } else if (methodParameterAnnotation instanceof QueryMap) {
@@ -257,19 +260,18 @@ final class RequestFactoryParser {
               throw parameterError(i, "@QueryMap parameter type must be Map.");
             }
             QueryMap queryMap = (QueryMap) methodParameterAnnotation;
-            requestBuilderActions[i] = new RequestBuilderAction.QueryMap(queryMap.encoded());
+            action = new RequestBuilderAction.QueryMap(queryMap.encoded());
 
           } else if (methodParameterAnnotation instanceof Header) {
             Header header = (Header) methodParameterAnnotation;
-            requestBuilderActions[i] = new RequestBuilderAction.Header(header.value());
+            action = new RequestBuilderAction.Header(header.value());
 
           } else if (methodParameterAnnotation instanceof Field) {
             if (!isFormEncoded) {
               throw parameterError(i, "@Field parameters can only be used with form encoding.");
             }
             Field field = (Field) methodParameterAnnotation;
-            requestBuilderActions[i] =
-                new RequestBuilderAction.Field(field.value(), field.encoded());
+            action = new RequestBuilderAction.Field(field.value(), field.encoded());
             gotField = true;
 
           } else if (methodParameterAnnotation instanceof FieldMap) {
@@ -280,7 +282,7 @@ final class RequestFactoryParser {
               throw parameterError(i, "@FieldMap parameter type must be Map.");
             }
             FieldMap fieldMap = (FieldMap) methodParameterAnnotation;
-            requestBuilderActions[i] = new RequestBuilderAction.FieldMap(fieldMap.encoded());
+            action = new RequestBuilderAction.FieldMap(fieldMap.encoded());
             gotField = true;
 
           } else if (methodParameterAnnotation instanceof Part) {
@@ -289,21 +291,17 @@ final class RequestFactoryParser {
             }
             Part part = (Part) methodParameterAnnotation;
             com.squareup.okhttp.Headers headers = com.squareup.okhttp.Headers.of(
-                "Content-Disposition", "name=\"" + part.value() + "\"",
+                "Content-Disposition", "form-data; name=\"" + part.value() + "\"",
                 "Content-Transfer-Encoding", part.encoding());
-            Converter<?> converter;
-            if (methodParameterType == RequestBody.class) {
-              converter = new OkHttpRequestBodyConverter();
-            } else {
-              if (converterFactory == null) {
-                throw parameterError(i, "@Part parameter is %s"
-                    + " but no converter factory registered. Either add a converter factory"
-                    + " to the Retrofit instance or use RequestBody.",
-                    methodParameterType);
-              }
-              converter = converterFactory.get(methodParameterType);
+            Converter<?, RequestBody> converter;
+            try {
+              converter =
+                  retrofit.requestConverter(methodParameterType, methodParameterAnnotations);
+            } catch (RuntimeException e) { // Wide exception range because factories are user code.
+              throw parameterError(e, i, "Unable to create @Part converter for %s",
+                  methodParameterType);
             }
-            requestBuilderActions[i] = new RequestBuilderAction.Part<>(headers, converter);
+            action = new RequestBuilderAction.Part<>(headers, converter);
             gotPart = true;
 
           } else if (methodParameterAnnotation instanceof PartMap) {
@@ -315,8 +313,8 @@ final class RequestFactoryParser {
               throw parameterError(i, "@PartMap parameter type must be Map.");
             }
             PartMap partMap = (PartMap) methodParameterAnnotation;
-            requestBuilderActions[i] =
-                new RequestBuilderAction.PartMap(converterFactory, partMap.encoding());
+            action = new RequestBuilderAction.PartMap(retrofit, partMap.encoding(),
+                methodParameterAnnotations);
             gotPart = true;
 
           } else if (methodParameterAnnotation instanceof Body) {
@@ -328,21 +326,23 @@ final class RequestFactoryParser {
               throw parameterError(i, "Multiple @Body method annotations found.");
             }
 
-            Converter<?> converter;
-            if (methodParameterType == RequestBody.class) {
-              converter = new OkHttpRequestBodyConverter();
-            } else {
-              if (converterFactory == null) {
-                throw parameterError(i, "@Body parameter is %s"
-                        + " but no converter factory registered. Either add a converter factory"
-                        + " to the Retrofit instance or use RequestBody.",
-                    methodParameterType);
-              }
-              converter = converterFactory.get(methodParameterType);
+            Converter<?, RequestBody> converter;
+            try {
+              converter =
+                  retrofit.requestConverter(methodParameterType, methodParameterAnnotations);
+            } catch (RuntimeException e) { // Wide exception range because factories are user code.
+              throw parameterError(e, i, "Unable to create @Body converter for %s",
+                  methodParameterType);
             }
-
-            requestBuilderActions[i] = new RequestBuilderAction.Body<>(converter);
+            action = new RequestBuilderAction.Body<>(converter);
             gotBody = true;
+          }
+
+          if (action != null) {
+            if (requestBuilderActions[i] != null) {
+              throw parameterError(i, "Multiple Retrofit annotations found, only one allowed.");
+            }
+            requestBuilderActions[i] = action;
           }
         }
       }

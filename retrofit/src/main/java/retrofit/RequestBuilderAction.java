@@ -16,6 +16,9 @@
 package retrofit;
 
 import com.squareup.okhttp.Headers;
+import com.squareup.okhttp.RequestBody;
+import java.io.IOException;
+import java.lang.annotation.Annotation;
 import java.lang.reflect.Array;
 import java.util.Map;
 
@@ -189,9 +192,9 @@ abstract class RequestBuilderAction {
 
   static final class Part<T> extends RequestBuilderAction {
     private final Headers headers;
-    private final Converter<T> converter;
+    private final Converter<T, RequestBody> converter;
 
-    Part(Headers headers, Converter<T> converter) {
+    Part(Headers headers, Converter<T, RequestBody> converter) {
       this.headers = headers;
       this.converter = converter;
     }
@@ -199,18 +202,26 @@ abstract class RequestBuilderAction {
     @Override void perform(RequestBuilder builder, Object value) {
       if (value == null) return; // Skip null values.
 
-      //noinspection unchecked
-      builder.addPart(headers, converter.toBody((T) value));
+      RequestBody body;
+      try {
+        //noinspection unchecked
+        body = converter.convert((T) value);
+      } catch (IOException e) {
+        throw new RuntimeException("Unable to convert " + value + " to RequestBody");
+      }
+      builder.addPart(headers, body);
     }
   }
 
   static final class PartMap extends RequestBuilderAction {
-    private final Converter.Factory converterFactory;
+    private final Retrofit retrofit;
     private final String transferEncoding;
+    private final Annotation[] annotations;
 
-    PartMap(Converter.Factory converterFactory, String transferEncoding) {
-      this.converterFactory = converterFactory;
+    PartMap(Retrofit retrofit, String transferEncoding, Annotation[] annotations) {
+      this.retrofit = retrofit;
       this.transferEncoding = transferEncoding;
+      this.annotations = annotations;
     }
 
     @Override void perform(RequestBuilder builder, Object value) {
@@ -228,20 +239,28 @@ abstract class RequestBuilderAction {
         }
 
         Headers headers = Headers.of(
-            "Content-Disposition", "name=\"" + entryKey + "\"",
+            "Content-Disposition", "form-data; name=\"" + entryKey + "\"",
             "Content-Transfer-Encoding", transferEncoding);
+
+        Class<?> entryClass = entryValue.getClass();
         //noinspection unchecked
-        Converter<Object> converter =
-            (Converter<Object>) converterFactory.get(entryValue.getClass());
-        builder.addPart(headers, converter.toBody(entryValue));
+        Converter<Object, RequestBody> converter =
+            (Converter<Object, RequestBody>) retrofit.requestConverter(entryClass, annotations);
+        RequestBody body;
+        try {
+          body = converter.convert(entryValue);
+        } catch (IOException e) {
+          throw new RuntimeException("Unable to convert " + entryValue + " to RequestBody");
+        }
+        builder.addPart(headers, body);
       }
     }
   }
 
   static final class Body<T> extends RequestBuilderAction {
-    private final Converter<T> converter;
+    private final Converter<T, RequestBody> converter;
 
-    Body(Converter<T> converter) {
+    Body(Converter<T, RequestBody> converter) {
       this.converter = converter;
     }
 
@@ -249,8 +268,14 @@ abstract class RequestBuilderAction {
       if (value == null) {
         throw new IllegalArgumentException("Body parameter value must not be null.");
       }
-      //noinspection unchecked
-      builder.setBody(converter.toBody((T) value));
+      RequestBody body;
+      try {
+        //noinspection unchecked
+        body = converter.convert((T) value);
+      } catch (IOException e) {
+        throw new RuntimeException("Unable to convert " + value + " to RequestBody");
+      }
+      builder.setBody(body);
     }
   }
 }

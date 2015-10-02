@@ -19,6 +19,7 @@ import com.google.common.reflect.TypeToken;
 import com.google.common.util.concurrent.AbstractFuture;
 import com.google.common.util.concurrent.ListenableFuture;
 import java.io.IOException;
+import java.lang.annotation.Annotation;
 import java.lang.reflect.Type;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
@@ -35,7 +36,8 @@ import retrofit.http.GET;
  */
 public final class CustomCallAdapter {
   public static class ListenableFutureCallAdapterFactory implements CallAdapter.Factory {
-    @Override public CallAdapter<?> get(Type returnType) {
+    @Override public CallAdapter<ListenableFuture<?>> get(Type returnType, Annotation[] annotations,
+        Retrofit retrofit) {
       TypeToken<?> token = TypeToken.of(returnType);
       if (token.getRawType() != ListenableFuture.class) {
         return null;
@@ -47,13 +49,13 @@ public final class CustomCallAdapter {
       }
       final Type responseType = componentType.getType();
 
-      return new CallAdapter<Object>() {
+      return new CallAdapter<ListenableFuture<?>>() {
         @Override public Type responseType() {
           return responseType;
         }
 
-        @Override public ListenableFuture<?> adapt(Call<Object> call) {
-          CallFuture<Object> future = new CallFuture<>(call);
+        @Override public <R> ListenableFuture<R> adapt(Call<R> call) {
+          CallFuture<R> future = new CallFuture<>(call);
           call.enqueue(future);
           return future;
         }
@@ -71,7 +73,7 @@ public final class CustomCallAdapter {
         call.cancel();
       }
 
-      @Override public void success(Response<T> response) {
+      @Override public void onResponse(Response<T> response, Retrofit retrofit) {
         if (response.isSuccess()) {
           set(response.body());
         } else {
@@ -79,7 +81,7 @@ public final class CustomCallAdapter {
         }
       }
 
-      @Override public void failure(Throwable t) {
+      @Override public void onFailure(Throwable t) {
         setException(t);
       }
     }
@@ -97,7 +99,7 @@ public final class CustomCallAdapter {
   public static void main(String... args) {
     Retrofit retrofit = new Retrofit.Builder()
         .baseUrl("http://httpbin.org")
-        .callAdapterFactory(new ListenableFutureCallAdapterFactory())
+        .addCallAdapterFactory(new ListenableFutureCallAdapterFactory())
         .build();
 
     HttpBinService service = retrofit.create(HttpBinService.class);

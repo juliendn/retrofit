@@ -22,8 +22,8 @@ import com.google.gson.stream.JsonReader;
 import com.google.gson.stream.JsonToken;
 import com.google.gson.stream.JsonWriter;
 import com.squareup.okhttp.mockwebserver.MockResponse;
+import com.squareup.okhttp.mockwebserver.MockWebServer;
 import com.squareup.okhttp.mockwebserver.RecordedRequest;
-import com.squareup.okhttp.mockwebserver.rule.MockWebServerRule;
 import java.io.IOException;
 import org.junit.Before;
 import org.junit.Rule;
@@ -79,7 +79,7 @@ public final class GsonConverterFactoryTest {
     @POST("/") Call<AnInterface> anInterface(@Body AnInterface impl);
   }
 
-  @Rule public final MockWebServerRule server = new MockWebServerRule();
+  @Rule public final MockWebServer server = new MockWebServer();
 
   private Service service;
 
@@ -88,8 +88,8 @@ public final class GsonConverterFactoryTest {
         .registerTypeAdapter(AnInterface.class, new AnInterfaceAdapter())
         .create();
     Retrofit retrofit = new Retrofit.Builder()
-        .baseUrl(server.getUrl("/").toString())
-        .converterFactory(GsonConverterFactory.create(gson))
+        .baseUrl(server.url("/"))
+        .addConverterFactory(GsonConverterFactory.create(gson))
         .build();
     service = retrofit.create(Service.class);
   }
@@ -118,6 +118,15 @@ public final class GsonConverterFactoryTest {
     RecordedRequest request = server.takeRequest();
     assertThat(request.getBody().readUtf8()).isEqualTo("{\"theName\":\"value\"}");
     assertThat(request.getHeader("Content-Type")).isEqualTo("application/json; charset=UTF-8");
+  }
 
+  @Test public void serializeUsesConfiguration() throws IOException, InterruptedException {
+    server.enqueue(new MockResponse());
+
+    service.anImplementation(new AnImplementation(null)).execute();
+
+    RecordedRequest request = server.takeRequest();
+    assertThat(request.getBody().readUtf8()).isEqualTo("{}"); // Null value was not serialized.
+    assertThat(request.getHeader("Content-Type")).isEqualTo("application/json; charset=UTF-8");
   }
 }
