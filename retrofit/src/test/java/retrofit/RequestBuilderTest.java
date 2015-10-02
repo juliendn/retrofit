@@ -636,6 +636,20 @@ public final class RequestBuilderTest {
     assertThat(request.urlString()).isEqualTo("http://example.com/foo/bar/po%20ng/");
     assertThat(request.body()).isNull();
   }
+  
+  @Test public void getWithEncodedPathParamWithSlash() {
+    class Example {
+      @GET("/foo/bar/{ping}/") //
+      Call<ResponseBody> method(@Path(value = "ping", encoded = true) String ping) {
+        return null;
+      }
+    }
+    Request request = buildRequest(Example.class, "pong/pong");
+    assertThat(request.method()).isEqualTo("GET");
+    assertThat(request.headers().size()).isZero();
+    assertThat(request.urlString()).isEqualTo("http://example.com/foo/bar/pong/pong/");
+    assertThat(request.body()).isNull();
+  }
 
   @Test public void pathParamRequired() {
     class Example {
